@@ -1,0 +1,64 @@
+version: "3"
+
+# Developer entry point for common tasks. Underlying scripts are also callable
+# directly (see README's Development section).
+
+vars:
+  BIN_NAME: opbroker
+  DIST: dist
+  INSTALL_DIR:
+    sh: |
+      if [ -n "${GDOT_DIR:-}" ]; then
+        echo "$GDOT_DIR/bin"
+      else
+        echo "$HOME/.local/bin"
+      fi
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  test:
+    desc: Run go vet, go test, and golangci-lint (if installed)
+    cmds:
+      - ./tests/run.sh
+
+  build:
+    desc: Build the binary into ./{{.DIST}}/{{.BIN_NAME}}
+    cmds:
+      - ./.repo/scripts/build.sh
+
+  install:
+    desc: Build and copy to $GDOT_DIR/bin or ~/.local/bin
+    deps: [build]
+    cmds:
+      - mkdir -p "{{.INSTALL_DIR}}"
+      - cp "{{.DIST}}/{{.BIN_NAME}}" "{{.INSTALL_DIR}}/{{.BIN_NAME}}"
+      - cmd: xattr -c "{{.INSTALL_DIR}}/{{.BIN_NAME}}" 2>/dev/null || true
+        platforms: [darwin]
+      - cmd: codesign --force --sign - "{{.INSTALL_DIR}}/{{.BIN_NAME}}" 2>/dev/null || true
+        platforms: [darwin]
+      - echo "installed{{":"}} {{.INSTALL_DIR}}/{{.BIN_NAME}}"
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run --config .repo/.golangci.yml ./...
+
+  fmt:
+    desc: Format Go sources with gofmt
+    cmds:
+      - gofmt -w .
+
+  fmt-check:
+    desc: Fail if any Go source is not gofmt-clean
+    cmds:
+      - bash -c 'diff=$(gofmt -l .); if [ -n "$diff" ]; then echo "The following files are not gofmt-clean:"; echo "$diff"; exit 1; fi'
+
+  dev-reload:
+    desc: Build + install + kill running agent for a fast dev loop
+    deps: [install]
+    cmds:
+      - bash -c 'if pgrep -f "{{.BIN_NAME}} session start" >/dev/null 2>&1; then pkill -f "{{.BIN_NAME}} session start" 2>/dev/null || true; echo "stopped{{":"}} previous agent"; fi'

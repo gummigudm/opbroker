@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Enforce conventional-commit format on the PR title. That title becomes
+  # the squash-merge commit message, so this keeps main's history parseable
+  # by release-please.
+  #
+  # Skip release-please's auto-generated PRs — their titles are already
+  # `chore(main): release X.Y.Z` (valid), and their contents are just
+  # CHANGELOG + manifest bumps that have already been validated by CI on the
+  # feature PRs that produced them.
+  pr-title:
+    name: PR title (conventional commit)
+    runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # These match the changelog-sections in release-please-config.json.
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            chore
+            test
+            build
+            ci
+          requireScope: false
+
+  # Vet, test, lint, format-check, and provisional build. macOS runner is
+  # required because internal/security uses macOS-only cgo (proc_pidpath +
+  # LOCAL_PEERPID).
+  #
+  # Skip release-please's auto-generated PRs — the commits they contain
+  # already passed CI in their original feature PRs; the release PR only
+  # touches CHANGELOG.md and the release-please manifest.
+  build-test:
+    name: vet + test + build
+    runs-on: macos-latest
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go mod tidy check
+        run: |
+          go mod tidy
+          if ! git diff --quiet go.mod go.sum; then
+            echo "go.mod/go.sum are not tidy. Run 'go mod tidy' locally and commit."
+            git --no-pager diff go.mod go.sum
+            exit 1
+          fi
+
+      - name: gofmt check
+        run: |
+          diff=$(gofmt -l .)
+          if [ -n "$diff" ]; then
+            echo "The following files are not gofmt-clean:"
+            echo "$diff"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          args: --config .repo/.golangci.yml ./...
+
+      - name: go test
+        run: go test -race ./...
+
+      - name: build (provisional)
+        env:
+          VERSION: pr-${{ github.event.pull_request.number }}-${{ github.sha }}
+        run: ./.repo/scripts/build.sh
+
+      - name: verify version injection
+        run: ./dist/opbroker --version

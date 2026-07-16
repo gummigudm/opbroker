@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # release-please inspects commits on main since the last tag and either:
+  #   - opens/updates a Release PR that will bump the version + changelog, or
+  #   - if the current commit IS the Release PR merge, tags + creates the
+  #     GitHub Release. Downstream jobs key off `release_created`.
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: .repo/release-please-config.json
+          manifest-file: .repo/release-please-manifest.json
+
+  # Build the darwin/arm64 binary, package with SHA256SUMS + install.sh, and
+  # attach to the GitHub Release that release-please just created.
+  build:
+    name: build + upload
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binary
+        env:
+          VERSION: ${{ needs.release-please.outputs.tag_name }}
+          GOOS: darwin
+          GOARCH: arm64
+        run: ./.repo/scripts/build.sh
+
+      - name: Verify version injection
+        run: |
+          got=$(./dist/opbroker --version)
+          want="${{ needs.release-please.outputs.tag_name }}"
+          if [ "$got" != "$want" ]; then
+            echo "version mismatch: binary reports '$got', expected '$want'"
+            exit 1
+          fi
+
+      - name: Package artifacts
+        run: |
+          cd dist
+          tar czf opbroker-darwin-arm64.tar.gz opbroker
+          shasum -a 256 opbroker-darwin-arm64.tar.gz > SHA256SUMS
+          cp ../.repo/scripts/install.sh install.sh
+          ls -la
+
+      - name: Attach assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          gh release upload "$TAG" \
+            dist/opbroker-darwin-arm64.tar.gz \
+            dist/SHA256SUMS \
+            dist/install.sh \
+            --clobber

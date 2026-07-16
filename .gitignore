@@ -1,0 +1,33 @@
+# Local-only planning docs
+IMPLEMENTATION_PLAN.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / tooling
+.idea/
+.vscode/
+.claude/
+.claude/settings.local.json
+*.swp
+*.swo
+
+# Local task caches
+.task/
+
+# Env / secrets
+.env
+.env.*
+
+# Go build artifacts
+/opbroker
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.txt
+
+# Go module cache is global; local vendor if used
+/vendor/
