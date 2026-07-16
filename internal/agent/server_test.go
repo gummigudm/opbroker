@@ -385,6 +385,58 @@ func TestServer_SecretsPropagate(t *testing.T) {
 	}
 }
 
+// TestServer_EnvTemplateExpansion: ${account} and ${title} in env values
+// expand from the currently-selected item without touching the fetcher, and
+// are never marked secret.
+func TestServer_EnvTemplateExpansion(t *testing.T) {
+	fetcher := &fakeFetcher{
+		accounts:     []AccountOption{{Account: "bar-prod", Title: "Bar Prod Creds", ItemID: "id1"}},
+		fields:       map[string]string{"bar_token": "s3cret"},
+		secretFields: map[string]bool{"bar_token": true},
+	}
+	profiles := fakeProfiles{
+		"bar": &ProfileConfig{
+			Tag: "BarService/creds", AccountField: "account",
+			Env: map[string]string{
+				"BAR_TOKEN":   "bar_token",  // 1P field
+				"BAR_ACCOUNT": "${account}", // template
+				"BAR_TITLE":   "${title}",   // template
+			},
+		},
+	}
+	socket, stop := startTestServer(t, fetcher, profiles)
+	defer stop()
+
+	conn := dial(t, socket)
+	defer conn.Close()
+	if err := WriteMessage(conn, Request{Type: TypeGet, Profile: "bar"}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var r Response
+	if err := ReadMessage(conn, &r); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if r.Type != TypeOK {
+		t.Fatalf("resp type = %q, want ok; error=%q", r.Type, r.Error)
+	}
+	if r.Env["BAR_TOKEN"] != "s3cret" {
+		t.Errorf("BAR_TOKEN = %q, want s3cret", r.Env["BAR_TOKEN"])
+	}
+	if r.Env["BAR_ACCOUNT"] != "bar-prod" {
+		t.Errorf("BAR_ACCOUNT = %q, want bar-prod", r.Env["BAR_ACCOUNT"])
+	}
+	if r.Env["BAR_TITLE"] != "Bar Prod Creds" {
+		t.Errorf("BAR_TITLE = %q, want 'Bar Prod Creds'", r.Env["BAR_TITLE"])
+	}
+	// Only the real 1P-sourced entry is secret; templates are not.
+	if !r.Secrets["BAR_TOKEN"] {
+		t.Errorf("BAR_TOKEN should be secret")
+	}
+	if r.Secrets["BAR_ACCOUNT"] || r.Secrets["BAR_TITLE"] {
+		t.Errorf("templates should not be secret; got %+v", r.Secrets)
+	}
+}
+
 func TestServer_UnknownProfile(t *testing.T) {
 	socket, stop := startTestServer(t, &fakeFetcher{}, fakeProfiles{})
 	defer stop()
