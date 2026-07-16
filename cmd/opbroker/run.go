@@ -26,41 +26,46 @@ func joinAccounts(opts []agent.AccountOption) string {
 }
 
 // noTTYError builds a user-facing error for when the interactive picker
-// can't attach a controlling terminal. Includes the available accounts and
-// a copy-paste-friendly suggestion, choosing between the target-argv form
-// (if the profile has an identity flag) and the opbroker `--account` form.
+// can't attach a controlling terminal. Lists available accounts and the
+// applicable copy-paste examples: account_arg (always available;
+// opbroker-owned, stripped before exec), the target's identity flag
+// (if the profile has one; leaves the flag in argv), and the top-level
+// opbroker --account fallback.
 func noTTYError(opts []agent.AccountOption, prof *agent.ProfileConfig) error {
 	names := make([]string, len(opts))
 	for i, o := range opts {
 		names[i] = o.Account
 	}
-
-	var idFlag string
-	if prof != nil {
-		idFlag = identityFlagOf(prof)
-	}
-
-	var hint string
-	switch {
-	case len(names) == 0:
-		hint = "  (no accounts available for this tag)"
-	case idFlag != "":
-		hint = fmt.Sprintf(
-			"  pass one via the target's %s flag, e.g.\n    <cmd> %s %s\n  or via opbroker directly:\n    opbroker run --account %s -- <cmd> …",
-			idFlag, idFlag, names[0], names[0],
-		)
-	default:
-		hint = fmt.Sprintf(
-			"  pass --account to opbroker, e.g.\n    opbroker run --account %s -- <cmd> …",
-			names[0],
-		)
-	}
-
-	return fmt.Errorf(
+	header := fmt.Sprintf(
 		"no controlling terminal available for account picker\n"+
-			"  available accounts: %s\n%s",
-		strings.Join(names, ", "), hint,
+			"  available accounts: %s",
+		strings.Join(names, ", "),
 	)
+	if len(names) == 0 {
+		return fmt.Errorf("%s\n  (no accounts available for this tag)", header)
+	}
+
+	var hints []string
+	if prof != nil && prof.AccountArg != "" {
+		hints = append(hints, fmt.Sprintf(
+			"  pass %s inside the wrapped command (opbroker consumes it):\n    <cmd> %s %s",
+			prof.AccountArg, prof.AccountArg, names[0],
+		))
+	}
+	if prof != nil {
+		if idFlag := identityFlagOf(prof); idFlag != "" {
+			hints = append(hints, fmt.Sprintf(
+				"  or via the target's own %s flag:\n    <cmd> %s %s",
+				idFlag, idFlag, names[0],
+			))
+		}
+	}
+	hints = append(hints, fmt.Sprintf(
+		"  or via opbroker directly:\n    opbroker run --account %s -- <cmd> …",
+		names[0],
+	))
+
+	return fmt.Errorf("%s\n%s", header, strings.Join(hints, "\n"))
 }
 
 // fieldFlag captures repeatable --field NAME=field flags.
@@ -138,9 +143,24 @@ func cmdRun(args []string) error {
 	// so it doesn't confuse the argv walker and doesn't leak to the target.
 	rctx.args, rctx.debug = argparse.TakeBoolFlag(rctx.args, DebugFlag)
 
-	// If the profile has an identity flag (args entry mapped to ${account})
-	// and the user didn't set --account on opbroker, try to pick the account
-	// off the target argv.
+	// account_arg (opbroker-owned): consume + strip from argv. Highest
+	// precedence after the top-level opbroker --account flag. Even when the
+	// profile has an args-side identity flag, the user's account_arg value
+	// wins — we record that we consumed it so the injection step below can
+	// overwrite any stale user-typed identity-flag value.
+	accountArgTaken := false
+	if rctx.req.Account == "" && rctx.profile != nil && rctx.profile.AccountArg != "" {
+		remaining, val, ok := argparse.TakeFlag(rctx.args, rctx.profile.AccountArg)
+		rctx.args = remaining
+		if ok {
+			rctx.req.Account = val
+			accountArgTaken = true
+		}
+	}
+
+	// Identity-flag extraction (opportunistic — target owns the flag; we
+	// leave it in argv so the target still sees it). Only runs if we haven't
+	// already picked an account via account_arg or the top-level flag.
 	if rctx.req.Account == "" && rctx.profile != nil {
 		if idFlag := identityFlagOf(rctx.profile); idFlag != "" {
 			if v, ok := argparse.ExtractFlag(rctx.args, idFlag); ok {
@@ -180,6 +200,17 @@ func cmdRun(args []string) error {
 	}
 	if resp.Type != agent.TypeOK {
 		return fmt.Errorf("agent returned unexpected response type %q", resp.Type)
+	}
+
+	// If account_arg was used and the profile has an identity flag in args,
+	// strip any user-typed identity-flag value from argv so the injected
+	// value (from the account_arg pick) wins. Ensures `foo --opbroker-account
+	// A --account B` reaches the target as `foo --account A`, not `foo
+	// --account B` or with both flags.
+	if accountArgTaken && rctx.profile != nil {
+		if idFlag := identityFlagOf(rctx.profile); idFlag != "" {
+			rctx.args, _, _ = argparse.TakeFlag(rctx.args, idFlag)
+		}
 	}
 
 	// Track which flags opbroker will actually inject (i.e., were not already
@@ -235,6 +266,7 @@ func buildRunContext(cfg *config.Merged, profileName, tag, accountField, account
 			OpAccount:    opAccount,
 			ArgStyle:     config.ArgStyleSeparate,
 			ArgPlacement: config.ArgPlacementFirst,
+			AccountArg:   config.DefaultAccountArg,
 		}
 		rctx.req.Config = p
 		rctx.profile = p

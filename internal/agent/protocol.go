@@ -46,6 +46,7 @@ type ProfileConfig struct {
 	Args         map[string]string `json:"args,omitempty"`
 	ArgStyle     string            `json:"arg_style,omitempty"`
 	ArgPlacement string            `json:"arg_placement,omitempty"`
+	AccountArg   string            `json:"account_arg,omitempty"`
 }
 
 // Response is an agent-to-client message.

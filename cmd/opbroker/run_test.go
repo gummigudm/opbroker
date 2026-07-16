@@ -8,13 +8,14 @@ import (
 	"github.com/gummigudm/opbroker/internal/config"
 )
 
-func TestNoTTYError_ProfileWithIdentityFlag(t *testing.T) {
+func TestNoTTYError_ProfileWithIdentityFlagAndAccountArg(t *testing.T) {
 	opts := []agent.AccountOption{
 		{Account: "account1", Title: "T1", ItemID: "id1"},
 		{Account: "account2", Title: "T2", ItemID: "id2"},
 	}
 	prof := &agent.ProfileConfig{
-		Args: map[string]string{"--account": config.ArgTemplateAccount, "--region": "aws_region"},
+		Args:       map[string]string{"--account": config.ArgTemplateAccount, "--region": "aws_region"},
+		AccountArg: config.DefaultAccountArg,
 	}
 
 	got := noTTYError(opts, prof).Error()
@@ -23,28 +24,36 @@ func TestNoTTYError_ProfileWithIdentityFlag(t *testing.T) {
 	if !strings.Contains(got, "account1, account2") {
 		t.Errorf("missing account list; got:\n%s", got)
 	}
-	// Must mention the target-flag form.
-	if !strings.Contains(got, "target's --account flag") {
+	// account_arg (primary hint) — stripped by opbroker.
+	if !strings.Contains(got, "--opbroker-account account1") {
+		t.Errorf("missing account_arg hint; got:\n%s", got)
+	}
+	if !strings.Contains(got, "opbroker consumes it") {
+		t.Errorf("account_arg hint should explain the strip behavior; got:\n%s", got)
+	}
+	// Identity flag (secondary hint) — target's own flag.
+	if !strings.Contains(got, "target's own --account flag") {
 		t.Errorf("missing target-flag hint; got:\n%s", got)
 	}
-	// Must show a concrete copy-paste example with the first account.
 	if !strings.Contains(got, "--account account1") {
-		t.Errorf("missing copy-paste example; got:\n%s", got)
+		t.Errorf("missing --account example; got:\n%s", got)
 	}
-	// Must also offer the opbroker fallback form.
+	// Top-level opbroker fallback.
 	if !strings.Contains(got, "opbroker run --account account1") {
 		t.Errorf("missing opbroker fallback hint; got:\n%s", got)
 	}
 }
 
 func TestNoTTYError_ProfileWithoutIdentityFlag(t *testing.T) {
+	// bar-shaped profile: identity in env, no args identity flag. account_arg
+	// is still available as the primary way to force a selection.
 	opts := []agent.AccountOption{
 		{Account: "prod"},
 		{Account: "staging"},
 	}
 	prof := &agent.ProfileConfig{
-		// No args entry mapped to ${account} — no identity flag.
-		Env: map[string]string{"FOO_TOKEN": "foo_token"},
+		Env:        map[string]string{"BAR_TOKEN": "bar_token", "BAR_ACCOUNT": config.ArgTemplateAccount},
+		AccountArg: config.DefaultAccountArg,
 	}
 
 	got := noTTYError(opts, prof).Error()
@@ -52,13 +61,28 @@ func TestNoTTYError_ProfileWithoutIdentityFlag(t *testing.T) {
 	if !strings.Contains(got, "prod, staging") {
 		t.Errorf("missing account list; got:\n%s", got)
 	}
-	// Should NOT mention target flag when profile has none.
-	if strings.Contains(got, "target's") {
-		t.Errorf("should not suggest target flag when profile has none; got:\n%s", got)
+	// account_arg hint present.
+	if !strings.Contains(got, "--opbroker-account prod") {
+		t.Errorf("missing account_arg hint; got:\n%s", got)
 	}
-	// Should suggest the opbroker form.
+	// Should NOT mention target's own flag — profile has none.
+	if strings.Contains(got, "target's own") {
+		t.Errorf("should not suggest target's own flag when profile has none; got:\n%s", got)
+	}
+	// Should still suggest opbroker fallback.
 	if !strings.Contains(got, "opbroker run --account prod") {
-		t.Errorf("missing opbroker hint; got:\n%s", got)
+		t.Errorf("missing opbroker fallback; got:\n%s", got)
+	}
+}
+
+func TestNoTTYError_CustomAccountArg(t *testing.T) {
+	opts := []agent.AccountOption{{Account: "only"}}
+	prof := &agent.ProfileConfig{
+		AccountArg: "--opbroker-foo-account",
+	}
+	got := noTTYError(opts, prof).Error()
+	if !strings.Contains(got, "--opbroker-foo-account only") {
+		t.Errorf("missing custom account_arg in hint; got:\n%s", got)
 	}
 }
 
@@ -70,14 +94,17 @@ func TestNoTTYError_ZeroOptions(t *testing.T) {
 }
 
 func TestNoTTYError_NilProfile(t *testing.T) {
-	// If prof is nil but there ARE accounts, we should still get the opbroker-form hint.
+	// If prof is nil but there ARE accounts, we get only the opbroker fallback.
 	opts := []agent.AccountOption{{Account: "only"}}
 	got := noTTYError(opts, nil).Error()
 
 	if !strings.Contains(got, "opbroker run --account only") {
-		t.Errorf("nil-profile path should fall back to opbroker form; got:\n%s", got)
+		t.Errorf("nil-profile path should include opbroker fallback; got:\n%s", got)
 	}
-	if strings.Contains(got, "target's") {
+	if strings.Contains(got, "--opbroker-account") {
+		t.Errorf("nil-profile path should not suggest account_arg; got:\n%s", got)
+	}
+	if strings.Contains(got, "target's own") {
 		t.Errorf("nil-profile path should not mention target flag; got:\n%s", got)
 	}
 }

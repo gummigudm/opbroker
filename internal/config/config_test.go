@@ -133,6 +133,13 @@ func TestProfileValidate(t *testing.T) {
 		{"invalid arg_placement", &Profile{Name: "x", Tag: "t", AccountField: "a", Env: map[string]string{"K": "v"}, ArgPlacement: "middle"}, true},
 		{"valid separate", &Profile{Name: "x", Tag: "t", AccountField: "a", Env: map[string]string{"K": "v"}, ArgStyle: ArgStyleSeparate, ArgPlacement: ArgPlacementFirst}, false},
 		{"valid equals+last", &Profile{Name: "x", Tag: "t", AccountField: "a", Env: map[string]string{"K": "v"}, ArgStyle: ArgStyleEquals, ArgPlacement: ArgPlacementLast}, false},
+		{"account_arg valid", &Profile{Name: "x", Tag: "t", AccountField: "a", Env: map[string]string{"K": "v"}, AccountArg: "--opbroker-foo-account"}, false},
+		{"account_arg missing dash", &Profile{Name: "x", Tag: "t", AccountField: "a", Env: map[string]string{"K": "v"}, AccountArg: "opbroker-account"}, true},
+		{"account_arg collides with args", &Profile{Name: "x", Tag: "t", AccountField: "a",
+			Args:       map[string]string{"--account": ArgTemplateAccount},
+			AccountArg: "--account",
+		}, true},
+		{"account_arg equals --opbroker-debug", &Profile{Name: "x", Tag: "t", AccountField: "a", Env: map[string]string{"K": "v"}, AccountArg: "--opbroker-debug"}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -152,8 +159,18 @@ func TestProfileEffectiveDefaults(t *testing.T) {
 	if p.EffectiveArgPlacement() != ArgPlacementFirst {
 		t.Errorf("EffectiveArgPlacement() = %q, want %q", p.EffectiveArgPlacement(), ArgPlacementFirst)
 	}
+	if p.EffectiveAccountArg() != DefaultAccountArg {
+		t.Errorf("EffectiveAccountArg() = %q, want %q", p.EffectiveAccountArg(), DefaultAccountArg)
+	}
 	if p.IdentityFlag() != "" {
 		t.Errorf("empty profile IdentityFlag() = %q, want empty", p.IdentityFlag())
+	}
+}
+
+func TestProfileEffectiveAccountArg_Override(t *testing.T) {
+	p := &Profile{AccountArg: "--custom-account"}
+	if got := p.EffectiveAccountArg(); got != "--custom-account" {
+		t.Errorf("EffectiveAccountArg() = %q, want --custom-account", got)
 	}
 }
 
