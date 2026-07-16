@@ -79,6 +79,51 @@ func ExtractFlag(argv []string, flag string) (string, bool) {
 	return "", false
 }
 
+// TakeFlag removes flag+value from argv (in either "--flag value" or
+// "--flag=value" form) and returns the remaining argv plus the extracted
+// value. Semantics for value-detection match ExtractFlag: missing, empty,
+// or looks-like-a-flag values return ("", false). Multiple copies are all
+// removed; the first valid value is returned.
+func TakeFlag(argv []string, flag string) ([]string, string, bool) {
+	prefix := flag + "="
+	out := make([]string, 0, len(argv))
+	value := ""
+	present := false
+	i := 0
+	for i < len(argv) {
+		a := argv[i]
+		if a == flag {
+			// Separate form: consume flag + (optional) value token.
+			if i+1 < len(argv) {
+				v := argv[i+1]
+				if v != "" && !strings.HasPrefix(v, "-") {
+					if !present {
+						value = v
+						present = true
+					}
+					i += 2
+					continue
+				}
+			}
+			// Bare flag with no valid value — strip the flag and keep going.
+			i++
+			continue
+		}
+		if strings.HasPrefix(a, prefix) {
+			v := strings.TrimPrefix(a, prefix)
+			if v != "" && !present {
+				value = v
+				present = true
+			}
+			i++
+			continue
+		}
+		out = append(out, a)
+		i++
+	}
+	return out, value, present
+}
+
 // TakeBoolFlag removes every occurrence of flag from argv (boolean form only
 // — flag has no value). Returns the remaining argv and true if flag was
 // present at least once.
