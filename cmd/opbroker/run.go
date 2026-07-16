@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -22,6 +23,44 @@ func joinAccounts(opts []agent.AccountOption) string {
 		names[i] = o.Account
 	}
 	return strings.Join(names, ", ")
+}
+
+// noTTYError builds a user-facing error for when the interactive picker
+// can't attach a controlling terminal. Includes the available accounts and
+// a copy-paste-friendly suggestion, choosing between the target-argv form
+// (if the profile has an identity flag) and the opbroker `--account` form.
+func noTTYError(opts []agent.AccountOption, prof *agent.ProfileConfig) error {
+	names := make([]string, len(opts))
+	for i, o := range opts {
+		names[i] = o.Account
+	}
+
+	var idFlag string
+	if prof != nil {
+		idFlag = identityFlagOf(prof)
+	}
+
+	var hint string
+	switch {
+	case len(names) == 0:
+		hint = "  (no accounts available for this tag)"
+	case idFlag != "":
+		hint = fmt.Sprintf(
+			"  pass one via the target's %s flag, e.g.\n    <cmd> %s %s\n  or via opbroker directly:\n    opbroker run --account %s -- <cmd> …",
+			idFlag, idFlag, names[0], names[0],
+		)
+	default:
+		hint = fmt.Sprintf(
+			"  pass --account to opbroker, e.g.\n    opbroker run --account %s -- <cmd> …",
+			names[0],
+		)
+	}
+
+	return fmt.Errorf(
+		"no controlling terminal available for account picker\n"+
+			"  available accounts: %s\n%s",
+		strings.Join(names, ", "), hint,
+	)
 }
 
 // fieldFlag captures repeatable --field NAME=field flags.
@@ -124,6 +163,9 @@ func cmdRun(args []string) error {
 		}
 		choice, err := selector.Pick(filtered, "Select account")
 		if err != nil {
+			if errors.Is(err, selector.ErrNoTTY) {
+				return noTTYError(resp.Options, rctx.profile)
+			}
 			return err
 		}
 		rctx.req.Type = agent.TypeSelect
