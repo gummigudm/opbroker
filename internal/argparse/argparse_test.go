@@ -123,6 +123,63 @@ func TestInject(t *testing.T) {
 	}
 }
 
+func TestTakeFlag(t *testing.T) {
+	cases := []struct {
+		name        string
+		argv        []string
+		flag        string
+		wantArgv    []string
+		wantValue   string
+		wantPresent bool
+	}{
+		{
+			"separate", []string{"--account", "acct1", "other"}, "--account",
+			[]string{"other"}, "acct1", true,
+		},
+		{
+			"equals", []string{"--account=acct1", "other"}, "--account",
+			[]string{"other"}, "acct1", true,
+		},
+		{
+			"absent", []string{"a", "b"}, "--account",
+			[]string{"a", "b"}, "", false,
+		},
+		{
+			"empty separate value (next is a flag) — flag still stripped",
+			[]string{"--account", "--other"}, "--account",
+			[]string{"--other"}, "", false,
+		},
+		{
+			"empty equals value", []string{"--account="}, "--account",
+			[]string{}, "", false,
+		},
+		{
+			"prefix collision preserved",
+			[]string{"--accounts", "x", "--account", "y"}, "--account",
+			[]string{"--accounts", "x"}, "y", true,
+		},
+		{
+			"multiple copies — remove all, keep first value",
+			[]string{"--account", "first", "middle", "--account", "second"}, "--account",
+			[]string{"middle"}, "first", true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotArgv, gotValue, gotPresent := TakeFlag(tc.argv, tc.flag)
+			if gotPresent != tc.wantPresent {
+				t.Errorf("present = %v, want %v", gotPresent, tc.wantPresent)
+			}
+			if gotValue != tc.wantValue {
+				t.Errorf("value = %q, want %q", gotValue, tc.wantValue)
+			}
+			if !reflect.DeepEqual(gotArgv, tc.wantArgv) {
+				t.Errorf("argv = %v, want %v", gotArgv, tc.wantArgv)
+			}
+		})
+	}
+}
+
 func TestTakeBoolFlag(t *testing.T) {
 	cases := []struct {
 		name        string

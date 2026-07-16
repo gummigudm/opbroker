@@ -38,6 +38,19 @@ const (
 	// ArgPlacementLast appends them after any user-supplied args. Default: first.
 	ArgPlacementFirst = "first"
 	ArgPlacementLast  = "last"
+
+	// DefaultAccountArg is the opbroker-owned flag users can pass in the
+	// target argv to force account selection. Consumed and stripped by
+	// opbroker before exec; the target never sees it. Override per-profile
+	// via `account_arg` to avoid collisions when multiple wrappers are
+	// active in the same shell.
+	DefaultAccountArg = "--opbroker-account"
+
+	// DebugFlag is the opbroker-owned flag users can pass in the target argv
+	// to preview what would be exec'd without running the target. Duplicated
+	// here (as a const) so config validation can reject account_arg values
+	// that would collide with it.
+	DebugFlag = "--opbroker-debug"
 )
 
 // Global is the top-level config from config.yaml.
@@ -64,6 +77,7 @@ type Profile struct {
 	Args         map[string]string `yaml:"args,omitempty"`          // flag → 1P field name or ${account}/${title}
 	ArgStyle     string            `yaml:"arg_style,omitempty"`     // "separate" (default) | "equals"
 	ArgPlacement string            `yaml:"arg_placement,omitempty"` // "first" (default) | "last"
+	AccountArg   string            `yaml:"account_arg,omitempty"`   // opbroker-owned extraction flag; default DefaultAccountArg
 }
 
 // Profiles is the map from profiles.yaml.
@@ -224,7 +238,28 @@ func (p *Profile) Validate() error {
 		return fmt.Errorf("profile %q: arg_placement must be %q or %q, got %q", p.Name, ArgPlacementFirst, ArgPlacementLast, p.ArgPlacement)
 	}
 
+	// account_arg validation.
+	if p.AccountArg != "" {
+		if !strings.HasPrefix(p.AccountArg, "-") {
+			return fmt.Errorf("profile %q: account_arg %q must start with '-'", p.Name, p.AccountArg)
+		}
+		if p.AccountArg == DebugFlag {
+			return fmt.Errorf("profile %q: account_arg %q collides with the reserved --opbroker-debug flag", p.Name, p.AccountArg)
+		}
+		if _, ok := p.Args[p.AccountArg]; ok {
+			return fmt.Errorf("profile %q: account_arg %q also appears in args; opbroker can't own it and inject it at the same time", p.Name, p.AccountArg)
+		}
+	}
+
 	return nil
+}
+
+// EffectiveAccountArg returns AccountArg with the default filled in.
+func (p *Profile) EffectiveAccountArg() string {
+	if p.AccountArg == "" {
+		return DefaultAccountArg
+	}
+	return p.AccountArg
 }
 
 // EffectiveArgStyle returns ArgStyle with the default (separate) filled in.

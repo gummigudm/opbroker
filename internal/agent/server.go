@@ -388,7 +388,7 @@ func (s *Server) resolveForItem(prof *ProfileConfig, opt AccountOption) (*Resolv
 		return nil, fmt.Errorf("resolve fields: %w", err)
 	}
 
-	envValues, envSecrets := assembleEnv(prof.Env, fields)
+	envValues, envSecrets := assembleEnv(prof.Env, fields, opt.Account, opt.Title)
 	argValues, argSecrets := assembleArgs(prof.Args, fields, opt.Account, opt.Title)
 	secrets := mergeSecrets(envSecrets, argSecrets)
 
@@ -432,6 +432,9 @@ func mergeSecrets(a, b map[string]bool) map[string]bool {
 func collectFieldNames(env, args map[string]string) []string {
 	set := map[string]struct{}{}
 	for _, v := range env {
+		if isArgTemplate(v) {
+			continue
+		}
 		set[v] = struct{}{}
 	}
 	for _, v := range args {
@@ -450,18 +453,26 @@ func collectFieldNames(env, args map[string]string) []string {
 
 // assembleEnv projects the profile's env map onto resolved field values,
 // returning the value map and a set of env var names whose source was
-// CONCEALED in 1Password.
-func assembleEnv(env map[string]string, resolved map[string]ResolvedField) (map[string]string, map[string]bool) {
+// CONCEALED in 1Password. ${account} and ${title} templates are expanded
+// from the currently-selected item and are never marked secret.
+func assembleEnv(env map[string]string, resolved map[string]ResolvedField, account, title string) (map[string]string, map[string]bool) {
 	if len(env) == 0 {
 		return nil, nil
 	}
 	values := make(map[string]string, len(env))
 	secrets := map[string]bool{}
-	for envName, fieldName := range env {
-		rf := resolved[fieldName]
-		values[envName] = rf.Value
-		if rf.Secret {
-			secrets[envName] = true
+	for envName, source := range env {
+		switch source {
+		case argTemplateAccount:
+			values[envName] = account
+		case argTemplateTitle:
+			values[envName] = title
+		default:
+			rf := resolved[source]
+			values[envName] = rf.Value
+			if rf.Secret {
+				secrets[envName] = true
+			}
 		}
 	}
 	if len(secrets) == 0 {

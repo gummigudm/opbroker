@@ -31,5 +31,6 @@ func toAgentProfile(prof *config.Profile) *agent.ProfileConfig {
 		Args:         prof.Args,
 		ArgStyle:     prof.EffectiveArgStyle(),
 		ArgPlacement: prof.EffectiveArgPlacement(),
+		AccountArg:   prof.EffectiveAccountArg(),
 	}
 }

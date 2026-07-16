@@ -65,19 +65,43 @@ profiles:
       FOO_TOKEN: foo_token
     args:                         # optional: inject resolved values as CLI flags
       --account: ${account}       # ${account} = resolved account name (also the extraction target)
+    # account_arg: --opbroker-foo-account  # opbroker-owned selection flag; default: --opbroker-account
     # arg_style: separate         # "separate" (default) writes `--flag value`; "equals" writes `--flag=value`
     # arg_placement: first        # "first" (default) prepends; "last" appends
+
+  bar:
+    # bar-shaped profile: identity lives in an env var, not a CLI flag.
+    tag: BarService/creds
+    account_field: account
+    command: /path/to/bar.sh
+    env:
+      BAR_TOKEN:   bar_token
+      BAR_ACCOUNT: ${account}     # account identity delivered via env
 ```
 
-**`env` map** — Each entry projects a 1Password field value into a target-process environment variable.
+**`env` map** — Each entry projects a value into a target-process environment variable. Values can be:
 
-**`args` map** — Each entry maps a target-command flag to a value source:
+- A 1P field name — the resolved field value is set.
+- `${account}` — the resolved account name.
+- `${title}` — the 1P item's title.
 
-- `${account}` — the resolved account name. If the user passes this flag in their command (e.g. `foo --account acct1`), opbroker extracts it and uses it to select the account. Otherwise opbroker resolves the account (via last-selection or picker) and *injects* the flag into the target argv.
-- `${title}` — the 1Password item's title.
-- Any other string — a 1P field name; the resolved value is injected as the flag's value. If the source field is CONCEALED in 1Password, opbroker marks it as secret for masking in debug output.
+**`args` map** — Each entry maps a target-command flag to a value source (same value grammar as `env`).
 
-Flags the user already supplied are never duplicated; their explicit value wins.
+- If the flag's value is `${account}`, it's also the *identity flag*: opbroker will read the flag from the user's argv (extraction) or inject it with the resolved account when the user didn't supply it (injection).
+- All other args entries are inject-only.
+- Flags the user already supplied are never duplicated; their explicit value wins — UNLESS `account_arg` was used, in which case the identity flag is authoritative and any stale user-typed value gets replaced.
+
+**`account_arg`** — the opbroker-owned selection flag users can put inside the wrapped command. opbroker **strips it** from argv before exec, so the target never sees it. Default: `--opbroker-account`. Override per-profile when running multiple wrappers in the same shell that would otherwise clash. Works regardless of whether the profile has an identity flag in `args` — this is the recommended way to force an account for profiles like `bar` whose identity lives in env.
+
+Example: `foo --opbroker-account acct1` → opbroker uses `acct1`, strips the flag, execs `foo.sh --account acct1` (identity flag injected).
+
+Precedence for account selection:
+
+1. `--account` passed to opbroker itself (`opbroker run --account …`)
+2. `account_arg` extracted from target argv (default `--opbroker-account`)
+3. Identity flag extracted from target argv (an `args:` entry with `${account}`)
+4. Last-selection from cache
+5. Interactive picker (or the enriched no-tty error listing available accounts)
 
 ## Commands
 

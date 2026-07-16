@@ -13,8 +13,11 @@ import (
 )
 
 // ErrNoTTY is returned when Pick needs to prompt but no controlling terminal
-// is available (e.g. running under CI or with all fds redirected).
-var ErrNoTTY = fmt.Errorf("no controlling terminal available for account picker; pass --account to select non-interactively")
+// is available (e.g. running under CI or with all fds redirected). Callers
+// are expected to wrap this into a context-appropriate message — the raw
+// error text is intentionally minimal so nothing misleading leaks through
+// if a caller forgets to wrap.
+var ErrNoTTY = fmt.Errorf("no controlling terminal available for interactive picker")
 
 // Pick prompts the user to choose an account from opts. If len(opts) == 1 it
 // auto-selects. It uses the terminal via /dev/tty so it works even when
